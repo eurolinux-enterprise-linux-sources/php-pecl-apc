@@ -1,23 +1,24 @@
 %{!?__pecl: %{expand: %%global __pecl %{_bindir}/pecl}}
-%define php_extdir %(php-config --extension-dir 2>/dev/null || echo %{_libdir}/php4)                     
+%global php_extdir %(%{_bindir}/php-config --extension-dir 2>/dev/null || echo %{_libdir}/php4)
 %global php_zendabiver %((echo 0; php -i 2>/dev/null | sed -n 's/^PHP Extension => //p') | tail -1)
 %global php_version %((echo 0; php-config --version 2>/dev/null) | tail -1)
-%define pecl_name APC
+%global pecl_name APC
 
 Summary:       APC caches and optimizes PHP intermediate code
 Name:          php-pecl-apc
-Version:       3.1.3p1
-Release:       1.2%{?dist}.1
+Version:       3.1.9
+Release:       2%{?dist}
 License:       PHP
 Group:         Development/Languages
 URL:           http://pecl.php.net/package/APC
 Source:        http://pecl.php.net/get/APC-%{version}.tgz
+
 BuildRoot:     %{_tmppath}/%{name}-%{version}-%{release}-root
 Conflicts:     php-mmcache php-eaccelerator
 BuildRequires: php-devel >= 5.1.0, httpd-devel, php-pear, pcre-devel
 Requires(post): %{__pecl}
 Requires(postun): %{__pecl}
-%if %{?php_zend_api}0
+%if 0%{?php_zend_api:1}
 # Require clean ABI/API versions if available (Fedora)
 Requires:      php(zend-abi) = %{php_zend_api}
 Requires:      php(api) = %{php_core_api}
@@ -40,8 +41,21 @@ APC is a free, open, and robust framework for caching and optimizing PHP
 intermediate code.
 
 
+%package devel
+Summary:       APC developer files (header)
+Group:         Development/Libraries
+Requires:      php-pecl-apc = %{version}-%{release}
+Requires:      php-devel
+
+%description devel
+These are the files needed to compile programs using APC serializer.
+
+
 %prep
 %setup -q -c 
+
+# Check than upstream version is correct, http://pecl.php.net/bugs/19590
+grep '"%{version}"' APC-%{version}/php_apc.h || exit 1
 
 
 %build
@@ -55,6 +69,9 @@ cd APC-%{version}
 pushd APC-%{version}
 %{__rm} -rf %{buildroot}
 %{__make} install INSTALL_ROOT=%{buildroot}
+
+mkdir -p %{buildroot}/%{_datadir}/%{name}
+cp -a apc.php %{buildroot}/%{_datadir}/%{name}/.
 
 # Fix the charset of NOTICE
 iconv -f iso-8859-1 -t utf8 NOTICE >NOTICE.utf8
@@ -72,18 +89,19 @@ popd
 extension = apc.so
 
 ; Options for the APC module version >= 3.1.3
+; See http://www.php.net/manual/en/apc.configuration.php
 
 ; This can be set to 0 to disable APC. 
 apc.enabled=1
 ; The number of shared memory segments to allocate for the compiler cache. 
 apc.shm_segments=1
-; The size of each shared memory segment in MB.
-apc.shm_size=64
+; The size of each shared memory segment, with M/G suffix
+apc.shm_size=64M
 ; A "hint" about the number of distinct source files that will be included or 
-; requested on your web server. Set to zero or omit if you're not sure;
+; requested on your web server. Set to zero or omit if you are not sure;
 apc.num_files_hint=1024
 ; Just like num_files_hint, a "hint" about the number of distinct user cache
-; variables to store.  Set to zero or omit if you're not sure;
+; variables to store.  Set to zero or omit if you are not sure;
 apc.user_entries_hint=4096
 ; The number of seconds a cache entry is allowed to idle in a slot in case this
 ; cache entry slot is needed by another entry.
@@ -111,7 +129,7 @@ apc.max_file_size=1M
 ; Whether to stat the main script file and the fullpath includes.
 apc.stat=1
 ; Vertification with ctime will avoid problems caused by programs such as svn or rsync by making 
-; sure inodes havn't changed since the last stat. APC will normally only check mtime.
+; sure inodes have not changed since the last stat. APC will normally only check mtime.
 apc.stat_ctime=0
 ; Whether to canonicalize paths in stat=0 mode or fall back to stat behaviour
 apc.canonicalize=0
@@ -128,33 +146,35 @@ apc.rfc1867_freq=0
 apc.rfc1867_ttl=3600
 ; Optimize include_once and require_once calls and avoid the expensive system calls used.
 apc.include_once_override=0
-apc.lazy_classes=00
+apc.lazy_classes=0
 apc.lazy_functions=0
-; not documented
+; Enables APC handling of signals, such as SIGSEGV, that write core files when signaled. 
+; APC will attempt to unmap the shared memory segment in order to exclude it from the core file
 apc.coredump_unmap=0
+; Records a md5 hash of files. 
 apc.file_md5=0
+; not documented
 apc.preload_path
 EOF
 
 
 %check
 cd %{pecl_name}-%{version}
-TEST_PHP_EXECUTABLE=$(which php) php run-tests.php \
+TEST_PHP_EXECUTABLE=%{_bindir}/php %{_bindir}/php run-tests.php \
     -n -q -d extension_dir=modules \
-    -d extension=apc.so \
-|| true  # 1 test fails http://pecl.php.net/bugs/bug.php?id=16793
+    -d extension=apc.so
 
 
 %if 0%{?pecl_install:1}
 %post
-%{pecl_install} %{pecl_xmldir}/%{name}.xml >/dev/null 2>&1 || :
+%{pecl_install} %{pecl_xmldir}/%{name}.xml >/dev/null || :
 %endif
 
 
 %if 0%{?pecl_uninstall:1}
 %postun
 if [ $1 -eq 0 ] ; then
-    %{pecl_uninstall} %{pecl_name} >/dev/null 2>&1 || :
+    %{pecl_uninstall} %{pecl_name} >/dev/null || :
 fi
 %endif
 
@@ -169,11 +189,26 @@ fi
 %doc APC-%{version}/NOTICE        APC-%{version}/TODO      APC-%{version}/apc.php
 %doc APC-%{version}/INSTALL
 %config(noreplace) %{_sysconfdir}/php.d/apc.ini
+%config(noreplace) %{_sysconfdir}/php.d/apc.ini
+%dir %{_datadir}/%{name}
+%{_datadir}/%{name}/apc.php
+
 %{php_extdir}/apc.so
 %{pecl_xmldir}/%{name}.xml
 
+%files devel
+%{_includedir}/php/ext/apc
+
 
 %changelog
+* Thu Dec 01 2011 Vojtech Vitek (V-Teq) <vvitek@redhat.com> - 3.1.9-2
+- remove -devel package ISA multilib dependencies
+
+* Thu Dec 01 2011 Vojtech Vitek (V-Teq) <vvitek@redhat.com> - 3.1.9-1
+- update to 3.1.9 (bugfix, stable) (#662655)
+- create -devel subpackage with header files
+- ship apc.php for easier referral in the config files
+
 * Sat Apr 10 2010 Joe Orton <jorton@redhat.com> - 3.1.3p1-1.2.1
 - hide scriptlet errors (#579036)
 
